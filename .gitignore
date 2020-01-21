@@ -1,0 +1,5 @@
+/zig-cache/
+.env
+/config/temp.json
+.gdb_history
+/test/
