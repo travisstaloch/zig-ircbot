@@ -3,15 +3,14 @@
 ```console
 # - create an .env file which exports IRC_OAUTH, IRC_CLIENTID, IRC_NICKNAME,
 #   IRC_CHANNEL and optionally API_CONFIG_FILE
-# - create a config/api.json (or whatever you provided in API_CONFIG_FILE) 
-#   file which defines api endpoints as shown below
+# - create a config/api.json (API_CONFIG_FILE) file which defines api endpoints
 # - create src/message_handlers.zig to process recevied messages
 source .env
 zig build run
 ```
 
 #### config/api.json
-```js
+```json
 {
     "get_users": {
             "type": "Get",
