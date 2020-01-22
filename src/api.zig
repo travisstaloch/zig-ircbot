@@ -37,21 +37,12 @@ pub const Request = struct {
     // TODO: use fetched_at to decide wether to fetch again
     pub fn fetch(self: *Request, requests: std.StringHashMap(Request)) anyerror!void {
         if (self.requires) |*requires| {
-            // save to new_requires to avoid concurrent modification error
-            var new_requires = std.StringHashMap(JsonKV).init(std.heap.c_allocator);
-            defer new_requires.deinit();
             var ritr = requires.iterator();
             while (ritr.next()) |requirekv| {
                 if (requests.get(requirekv.key)) |requestkv| {
                     try requestkv.value.fetch(requests);
-                    var jskv = requirekv.value;
-                    jskv.value = requestkv.value.cached.?.get(requirekv.value.key.String).?.value.value;
-                    _ = try new_requires.put(requirekv.key, jskv);
+                    requirekv.value.value = requestkv.value.cached.?.get(requirekv.value.key.String).?.value.value;
                 }
-            }
-            var nritr = new_requires.iterator();
-            while (nritr.next()) |nrkv| {
-                _ = try requires.put(nrkv.key, nrkv.value);
             }
             try replaceTextMap(std.heap.c_allocator, &self.url, requires);
             for (self.headers) |*hdr| try replaceTextMap(std.heap.c_allocator, hdr, requires);
@@ -59,8 +50,6 @@ pub const Request = struct {
 
         // check for ${} macro replacements in url and headers, post data eventually
         if (self.cached) |*cached| {
-            // var new_cached = std.StringHashMap(CachedJValue).init(std.heap.c_allocator);
-            // defer new_cached.deinit();
             switch (self.typ) {
                 .Get => {
                     var tree = try c.curl_get(self.url, self.headers);
@@ -93,7 +82,6 @@ pub const Request = struct {
                                         // why does this work??
                                         kv.value.value = json_value.Object.get(path_part).?.value;
                                         // warn("{} {}\n", .{ path, json_value.Object.get(path_part).?.value });
-                                        // _ = try new_cached.put(kv.key, .{ .path = path, .value = json_value.Object.get(path_part).?.value });
                                         self.fetched_at = c.get_time().*;
                                         break;
                                     }
