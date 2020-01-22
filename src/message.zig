@@ -138,9 +138,14 @@ pub fn strtoks(_in: []const u8, _delims: []?u8) ?[]const u8 {
 
 const assert = std.debug.assert;
 test "parse PRIVMSG" {
-    const m = Message.parse(":nick!~user@servername PRIVMSG #channel :message (could contain the word PRIVMSG)");
-    assert(m != null);
-    // warn("{}\n", .{m});
+    const _m = Message.parse(":nick!~user@host PRIVMSG #channel :message (could contain the word PRIVMSG)");
+    assert(_m != null);
+    const m = _m.?;
+    assert(std.mem.eql(u8, m.prefix.?.nick.?, "nick"));
+    assert(std.mem.eql(u8, m.command_text.?, "PRIVMSG"));
+    assert(m.command.? == .PRIVMSG);
+    assert(std.mem.eql(u8, m.prefix.?.user.?, "~user"));
+    assert(std.mem.eql(u8, m.prefix.?.host.?, "host"));
 }
 
 test "strtok" {
@@ -167,6 +172,10 @@ test "welcome messages" {
     while (itr.next()) |in| {
         const m = Message.parse(in);
         assert(m != null);
+        if (m.?.command != null and m.?.command.? != .PING) {
+            assert(m.?.prefix != null);
+            assert(m.?.prefix.?.host != null);
+        }
         // std.debug.warn("{}, .command_text = {}, .command = {}, .params = {}\n", .{ m.?.prefix, m.?.command_text, m.?.command, m.?.params });
     }
 }
