@@ -29,9 +29,9 @@ pub const Client = struct {
                 break;
             }
             var time_buf: [200]u8 = undefined;
-            const l = c.get_time_str(time_buf[0..]);
+            const time_len = c.get_time_str(time_buf[0..]);
             const received = recv_buf[0..len];
-            warn("{}\n", .{time_buf[0..l]});
+            warn("{}\n", .{time_buf[0..time_len]});
             warn("{}\n", .{received});
 
             var line_itr = mem.separate(received, "\r\n");
@@ -44,31 +44,31 @@ pub const Client = struct {
                     if (m.command) |cmd| {
                         switch (cmd) {
                             .PING => _ = try self.sendFmtErr("PONG :{}\r\n", .{m.params}),
-                            .PRIVMSG => {
-                                if (m.params) |params| {
-                                    const _sender = msg.strtok(params, ':');
-                                    if (_sender) |sender| {
-                                        const message_text = params[sender.len + 1 ..];
-                                        // warn("sender {} text {}\n", .{ sender, message_text });
-                                        if (message_text[0] == '!') {
-                                            const command_name = msg.strtoks(message_text[1..], &[_]?u8{ ' ', null });
-                                            if (self.message_handlers.get(command_name.?)) |handlerkv| {
-                                                var buf: [100]u8 = undefined;
-                                                if (try handlerkv.value(ctx, sender, message_text[command_name.?.len + 1 ..], &buf)) |handler_output| {
-                                                    _ = try self.privmsg(handler_output[0..:0]);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            else => {
-                                warn("unhandled command {}\n", .{cmd});
-                            },
+                            .PRIVMSG => try self.onPrivMsg(m, ctx),
+                            else => warn("unhandled command {}\n", .{cmd}),
                         }
                     }
                 } else {
                     warn("failed to parse '{}'\n", .{line});
+                }
+            }
+        }
+    }
+
+    fn onPrivMsg(self: Client, m: msg.Message, ctx: mhs.Context) !void {
+        if (m.params) |params| {
+            const _sender = msg.strtok(params, ':');
+            if (_sender) |sender| {
+                const message_text = params[sender.len + 1 ..];
+                // warn("sender {} text {}\n", .{ sender, message_text });
+                if (message_text[0] == '!') {
+                    const command_name = msg.strtoks(message_text[1..], &[_]?u8{ ' ', null });
+                    if (self.message_handlers.get(command_name.?)) |handlerkv| {
+                        var buf: [100]u8 = undefined;
+                        if (try handlerkv.value(ctx, sender, message_text[command_name.?.len + 1 ..], &buf)) |handler_output| {
+                            _ = try self.privmsg(handler_output[0..:0]);
+                        }
+                    }
                 }
             }
         }
@@ -94,6 +94,9 @@ pub const Client = struct {
         return result;
     }
 
+    // various send functions with/without format
+    // *Err versions propogate errors
+    //
     pub fn sendFmt(self: Self, comptime fmt: []const u8, values: var) void {
         _ = self.sendFmtErr(fmt, values) catch |e| warn("send failure. ERROR {}\n", .{e});
     }
@@ -114,14 +117,6 @@ pub const Client = struct {
         _ = try self.sendFmtErr("PRIVMSG #{} :{} \r\n", .{ self.config.channel, text });
     }
 
-    pub fn identify(self: Self) !void {
-        _ = try self.sendFmtErr("CAP END \r\n", .{});
-        _ = try self.sendFmtErr("PASS {} \r\n", .{self.config.password});
-        _ = try self.sendFmtErr("NICK {} \r\n", .{self.config.nickname});
-        _ = try self.sendFmtErr("USER {} * 0 {} \r\n", .{ self.config.username, self.config.real_name });
-        _ = try self.sendFmtErr("JOIN #{} \r\n", .{self.config.channel});
-    }
-
     pub fn sockSendFmt(sock: c_int, comptime fmt: [:0]const u8, values: var) !usize {
         var buf: [80]u8 = undefined;
         var m = try std.fmt.bufPrint(&buf, fmt, values);
@@ -132,5 +127,13 @@ pub const Client = struct {
     pub fn sockSend(sock: c_int, text: [:0]const u8) !usize {
         var sent = try c.sck_send(sock, text, text.len);
         return sent;
+    }
+
+    pub fn identify(self: Self) !void {
+        _ = try self.sendFmtErr("CAP END \r\n", .{});
+        _ = try self.sendFmtErr("PASS {} \r\n", .{self.config.password});
+        _ = try self.sendFmtErr("NICK {} \r\n", .{self.config.nickname});
+        _ = try self.sendFmtErr("USER {} * 0 {} \r\n", .{ self.config.username, self.config.real_name });
+        _ = try self.sendFmtErr("JOIN #{} \r\n", .{self.config.channel});
     }
 };

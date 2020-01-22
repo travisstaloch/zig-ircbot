@@ -1,7 +1,7 @@
 {
     "get_users": {
         "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: uo6dggojyb8d6soh92zknwmi5ej1q2' -X GET https://api.twitch.tv/kraken/users?login=nickname",
-        "type": "Get",
+        "type": "GET",
         "url": "https://api.twitch.tv/kraken/users?login=${channel}",
         "headers": [
             "Accept: application/vnd.twitchtv.v5+json",
@@ -16,7 +16,7 @@
     "get_stream": {
         "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: uo6dggojyb8d6soh92zknwmi5ej1q2' -X GET 'https://api.twitch.tv/kraken/streams/44322889'",
         "url": "https://api.twitch.tv/kraken/streams/${userid}",
-        "type": "Get",
+        "type": "GET",
         "headers": [
             "Accept: application/vnd.twitchtv.v5+json",
             "Client-ID: ${clientid}"

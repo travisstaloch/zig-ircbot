@@ -20,15 +20,14 @@ pub const Request = struct {
     typ: Type,
     url: [:0]const u8,
     headers: [][:0]const u8,
-    cached: ?std.StringHashMap(CachedJValue),
+    cached: std.StringHashMap(CachedJValue),
     requires: ?std.StringHashMap(JsonKV),
     fetched_at: ?c.c.tm = null,
 
     pub const Type = enum(u2) {
-        Get,
-        Put,
-        Post,
-        Invalid,
+        GET,
+        PUT,
+        POST,
     };
 
     // call fetch on all requires then do macro replacements
@@ -41,7 +40,7 @@ pub const Request = struct {
             while (ritr.next()) |requirekv| {
                 if (requests.get(requirekv.key)) |requestkv| {
                     try requestkv.value.fetch(requests);
-                    requirekv.value.value = requestkv.value.cached.?.get(requirekv.value.key.String).?.value.value;
+                    requirekv.value.value = requestkv.value.cached.get(requirekv.value.key.String).?.value.value;
                 }
             }
             try replaceTextMap(std.heap.c_allocator, &self.url, requires);
@@ -49,55 +48,51 @@ pub const Request = struct {
         }
 
         // check for ${} macro replacements in url and headers, post data eventually
-        if (self.cached) |*cached| {
-            switch (self.typ) {
-                .Get => {
-                    var tree = try c.curl_get(self.url, self.headers);
-                    defer tree.deinit();
-                    // look through cached parsing and resolving the path as we go
-                    // ex: users[0]._id
-                    var itr = cached.iterator();
-                    while (itr.next()) |kv| {
-                        const target_name = kv.key;
-                        const path = kv.value.path;
-                        // warn("target_name {} path {}\n", .{ target_name, path });
-                        var len: usize = 0;
-                        var json_value = tree.root;
-                        while (true) {
-                            switch (json_value) {
-                                .Object => {
-                                    if (strtok(path[len..], '.')) |path_part| {
-                                        len += path_part.len + 1;
-                                        // array
-                                        if (strtok(path_part, '[')) |arr_name| {
-                                            if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
-                                                const idx = try std.fmt.parseInt(usize, arr_idx, 10);
-                                                json_value = json_value.Object.get(arr_name).?.value.Array.at(idx);
-                                            }
-                                        } else { // object
-                                            json_value = json_value.Object.get(path_part).?.value;
+        switch (self.typ) {
+            .GET => {
+                var tree = try c.curl_get(self.url, self.headers);
+                defer tree.deinit();
+                // look through cached parsing and resolving the path as we go
+                // ex: users[0]._id
+                var itr = self.cached.iterator();
+                while (itr.next()) |kv| {
+                    const target_name = kv.key;
+                    const path = kv.value.path;
+                    // warn("target_name {} path {}\n", .{ target_name, path });
+                    var len: usize = 0;
+                    var json_value = tree.root;
+                    while (true) {
+                        switch (json_value) {
+                            .Object => {
+                                if (strtok(path[len..], '.')) |path_part| {
+                                    len += path_part.len + 1;
+                                    // array
+                                    if (strtok(path_part, '[')) |arr_name| {
+                                        if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
+                                            const idx = try std.fmt.parseInt(usize, arr_idx, 10);
+                                            json_value = json_value.Object.get(arr_name).?.value.Array.at(idx);
                                         }
-                                    } else {
-                                        const path_part = path[len..];
-                                        // why does this work??
-                                        kv.value.value = json_value.Object.get(path_part).?.value;
-                                        // warn("{} {}\n", .{ path, json_value.Object.get(path_part).?.value });
-                                        self.fetched_at = c.get_time().*;
-                                        break;
+                                    } else { // object
+                                        json_value = json_value.Object.get(path_part).?.value;
                                     }
-                                },
-                                else => {
-                                    kv.value.value = json_value;
+                                } else {
+                                    const path_part = path[len..];
+                                    // why does this work??
+                                    kv.value.value = json_value.Object.get(path_part).?.value;
+                                    // warn("{} {}\n", .{ path, json_value.Object.get(path_part).?.value });
+                                    self.fetched_at = c.get_time().*;
                                     break;
-                                },
-                            }
+                                }
+                            },
+                            else => {
+                                kv.value.value = json_value;
+                                break;
+                            },
                         }
                     }
-                    // var ncitr = new_cached.iterator();
-                    // while (ncitr.next()) |nckv| _ = try cached.put(nckv.key, nckv.value);
-                },
-                else => return error.NotImplemented,
-            }
+                }
+            },
+            else => return error.NotImplemented,
         }
     }
 
@@ -137,20 +132,21 @@ pub const Requests = struct {
             var url = req.Object.get("url").?.value.String[0..:0];
             try replaceText(a, &url, config);
 
-            const headers = req.Object.get("headers").?.value.Array;
-            const hs = try a.alloc([:0]const u8, headers.len);
-            for (headers.toSliceConst()) |hdr, i| {
-                hs[i] = hdr.String[0..:0];
-                try replaceText(a, &hs[i], config);
+            const _headers = req.Object.get("headers");
+            const hs = if (_headers == null) &[_][:0]const u8{} else (try a.alloc([:0]const u8, _headers.?.value.Array.len));
+            if (_headers) |headers| {
+                for (headers.value.Array.toSliceConst()) |hdr, i| {
+                    hs[i] = hdr.String[0..:0];
+                    try replaceText(a, &hs[i], config);
+                }
             }
-            const cached_opt = req.Object.get("cached");
-            var _tmap = if (cached_opt) |_cached| blk: {
-                const cached = _cached.value.Object;
-                var tmap = std.StringHashMap(CachedJValue).init(a);
-                var t_itr = cached.iterator();
-                while (t_itr.next()) |tkv| _ = try tmap.put(tkv.key, CachedJValue{ .path = tkv.value.String });
-                break :blk tmap;
-            } else null;
+
+            const _cached = req.Object.get("cached");
+            if (_cached == null) return error.InvalidJsonMissingCached;
+            var cached = _cached.?.value.Object;
+            var cmap = std.StringHashMap(CachedJValue).init(a);
+            var citr = cached.iterator();
+            while (citr.next()) |ckv| _ = try cmap.put(ckv.key, CachedJValue{ .path = ckv.value.String });
 
             const requires_opt = req.Object.get("requires");
             var _pmap = if (requires_opt) |_requires| blk: {
@@ -162,12 +158,15 @@ pub const Requests = struct {
             } else null;
 
             var buf: [20]u8 = undefined;
-            var typ = req.Object.get("type").?.value.String;
-            for (typ) |ch, chi| buf[chi] = std.ascii.toLower(ch);
+            const _typ = req.Object.get("type");
+            if (_typ == null) return error.InvalidJsonMissingType;
+            var typ = _typ.?.value.String;
+            for (typ) |ch, chi| buf[chi] = std.ascii.toUpper(ch);
             typ = buf[0..typ.len];
-            const typ_enum = if (std.mem.eql(u8, typ, "get")) Request.Type.Get else if (std.mem.eql(u8, typ, "post")) Request.Type.Post else if (std.mem.eql(u8, typ, "put")) Request.Type.Put else Request.Type.Invalid;
+            const typ_enum = std.meta.stringToEnum(Request.Type, typ);
+            if (typ_enum == null) return error.InvalidJsonUnsupportedType;
 
-            _ = try reqs.put(kv.key, Request{ .typ = typ_enum, .url = url, .headers = hs, .cached = _tmap, .requires = _pmap });
+            _ = try reqs.put(kv.key, Request{ .typ = typ_enum.?, .url = url, .headers = hs, .cached = cmap, .requires = _pmap });
         }
         return Requests{ .requests = reqs };
     }
