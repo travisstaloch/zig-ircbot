@@ -43,8 +43,8 @@ pub const Request = struct {
                     requirekv.value.value = requestkv.value.cached.get(requirekv.value.key.String).?.value.value;
                 }
             }
-            try replaceTextMap(std.heap.c_allocator, &self.url, requires);
-            for (self.headers) |*hdr| try replaceTextMap(std.heap.c_allocator, hdr, requires);
+            try replaceText(std.heap.c_allocator, &self.url, requires);
+            for (self.headers) |*hdr| try replaceText(std.heap.c_allocator, hdr, requires);
         }
 
         // check for ${} macro replacements in url and headers, post data eventually
@@ -52,47 +52,48 @@ pub const Request = struct {
             .GET => {
                 var tree = try c.curl_get(self.url, self.headers);
                 defer tree.deinit();
-                // look through cached parsing and resolving the path as we go
-                // ex: users[0]._id
                 var itr = self.cached.iterator();
                 while (itr.next()) |kv| {
-                    const target_name = kv.key;
                     const path = kv.value.path;
-                    // warn("target_name {} path {}\n", .{ target_name, path });
-                    var len: usize = 0;
-                    var json_value = tree.root;
-                    while (true) {
-                        switch (json_value) {
-                            .Object => {
-                                if (strtok(path[len..], '.')) |path_part| {
-                                    len += path_part.len + 1;
-                                    // array
-                                    if (strtok(path_part, '[')) |arr_name| {
-                                        if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
-                                            const idx = try std.fmt.parseInt(usize, arr_idx, 10);
-                                            json_value = json_value.Object.get(arr_name).?.value.Array.at(idx);
-                                        }
-                                    } else { // object
-                                        json_value = json_value.Object.get(path_part).?.value;
-                                    }
-                                } else {
-                                    const path_part = path[len..];
-                                    // why does this work??
-                                    kv.value.value = json_value.Object.get(path_part).?.value;
-                                    // warn("{} {}\n", .{ path, json_value.Object.get(path_part).?.value });
-                                    self.fetched_at = c.get_time().*;
-                                    break;
-                                }
-                            },
-                            else => {
-                                kv.value.value = json_value;
-                                break;
-                            },
-                        }
-                    }
+                    try self.parseJsonPath(tree, path, kv);
                 }
             },
             else => return error.NotImplemented,
+        }
+    }
+
+    // look through cached parsing and resolving the path as we go
+    // ex: users[0]._id
+    // resolve by visiting json structure
+    fn parseJsonPath(self: *Request, tree: std.json.ValueTree, path: []const u8, kv: *std.StringHashMap(CachedJValue).KV) !void {
+        var len: usize = 0;
+        var json_value = tree.root;
+        while (true) {
+            switch (json_value) {
+                .Object => {
+                    if (strtok(path[len..], '.')) |path_part| {
+                        len += path_part.len + 1;
+                        // array
+                        if (strtok(path_part, '[')) |arr_name| {
+                            if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
+                                const idx = try std.fmt.parseInt(usize, arr_idx, 10);
+                                json_value = json_value.Object.get(arr_name).?.value.Array.at(idx);
+                            }
+                        } else { // object
+                            json_value = json_value.Object.get(path_part).?.value;
+                        }
+                    } else {
+                        const path_part = path[len..];
+                        kv.value.value = json_value.Object.get(path_part).?.value;
+                        self.fetched_at = c.get_time().*;
+                        break;
+                    }
+                },
+                else => {
+                    kv.value.value = json_value;
+                    break;
+                },
+            }
         }
     }
 
@@ -182,51 +183,37 @@ pub const Requests = struct {
     }
 };
 
-// TODO: dedupe logic
-pub fn replaceText(a: *std.mem.Allocator, text_field: *[]const u8, config: Config) !void {
-    // look for ${field} in strings and replace with Config.field
-    if (std.mem.indexOf(u8, text_field.*, "${")) |starti| {
-        if (std.mem.indexOf(u8, text_field.*[starti..], "}")) |endi| {
-            const key = text_field.*[starti + 2 .. starti + endi];
-            // warn("found {}\n", .{target});
-            inline for (std.meta.fields(@TypeOf(config))) |field| {
-                if (std.mem.eql(u8, field.name, key)) {
-                    if (@field(config, field.name)) |value| {
-                        var ptr = text_field.*;
-                        text_field.* = try std.mem.join(a, "", &[_][]const u8{
-                            text_field.*[0..starti],
-                            value,
-                            text_field.*[starti + endi + 1 ..],
-                            "\x00",
-                        });
-                        a.free(ptr);
-                    }
-                }
-            }
-        }
-    }
+fn joinAndCleanup(a: *std.mem.Allocator, text_field: *[]const u8, starti: usize, endi: usize, value: []const u8) !void {
+    var ptr = text_field.*;
+    text_field.* = try std.mem.join(a, "", &[_][]const u8{
+        text_field.*[0..starti],
+        value,
+        text_field.*[starti + endi + 1 ..],
+        "\x00",
+    });
+    a.free(ptr);
 }
 
-// TODO: dedupe logic
-pub fn replaceTextMap(a: *std.mem.Allocator, text_field: *[]const u8, map: var) !void {
-    // look for ${field} in strings and replace with map[key]
+pub fn replaceText(a: *std.mem.Allocator, text_field: *[]const u8, provider: var) !void {
+    // look for ${field} in strings and replace with Config.field
+    // TODO: support replacing multiple occurrences of field
     if (std.mem.indexOf(u8, text_field.*, "${")) |starti| {
         if (std.mem.indexOf(u8, text_field.*[starti..], "}")) |endi| {
             const key = text_field.*[starti + 2 .. starti + endi];
-            // warn("replaceTextMap key {}\n", .{key});
-            var ritr = map.iterator();
-            while (ritr.next()) |requirekv| {
-                if (std.mem.eql(u8, requirekv.value.key.String, key)) {
-                    const value = requirekv.value.value.?.String;
-                    // warn("replaceTextMap value {}\n", .{value});
-                    var ptr = text_field.*;
-                    text_field.* = try std.mem.join(a, "", &[_][]const u8{
-                        text_field.*[0..starti],
-                        value,
-                        text_field.*[starti + endi + 1 ..],
-                        "\x00",
-                    });
-                    a.free(ptr);
+            if (@TypeOf(provider) == Config) {
+                inline for (std.meta.fields(@TypeOf(provider))) |field| {
+                    if (std.mem.eql(u8, field.name, key)) {
+                        if (@field(provider, field.name)) |value| {
+                            try joinAndCleanup(a, text_field, starti, endi, value);
+                        }
+                    }
+                }
+            } else { // hash map
+                var ritr = provider.iterator();
+                while (ritr.next()) |requirekv| {
+                    if (std.mem.eql(u8, requirekv.value.key.String, key)) {
+                        try joinAndCleanup(a, text_field, starti, endi, requirekv.value.value.?.String);
+                    }
                 }
             }
         }
