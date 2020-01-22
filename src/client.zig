@@ -20,8 +20,6 @@ pub const Client = struct {
         const reqs = try api.Requests.init(std.heap.c_allocator, self.config);
         var ctx = mhs.Context{ .config = self.config, .requests = reqs };
 
-        // reqs.print();
-
         while (true) {
             const len = @intCast(usize, std.c.recv(self.sock, @ptrCast(*c_void, &recv_buf), recv_buf.len - 2, 0));
             if (len == 0) {
@@ -94,9 +92,8 @@ pub const Client = struct {
         return result;
     }
 
-    // various send functions with/without format
+    // various send functions with/without format along with corresponding sockSend follow
     // *Err versions propogate errors
-    //
     pub fn sendFmt(self: Self, comptime fmt: []const u8, values: var) void {
         _ = self.sendFmtErr(fmt, values) catch |e| warn("send failure. ERROR {}\n", .{e});
     }

@@ -55,7 +55,12 @@ pub const Request = struct {
                 var itr = self.cached.iterator();
                 while (itr.next()) |kv| {
                     const path = kv.value.path;
-                    try self.parseJsonPath(tree, path, kv);
+                    const js_val = try parseJsonPath(tree, path);
+                    kv.value.value = js_val;
+                    switch (js_val) {
+                        .Object => self.fetched_at = c.get_time().*,
+                        else => {},
+                    }
                 }
             },
             else => return error.NotImplemented,
@@ -65,7 +70,7 @@ pub const Request = struct {
     // look through cached parsing and resolving the path as we go
     // ex: users[0]._id
     // resolve by visiting json structure
-    fn parseJsonPath(self: *Request, tree: std.json.ValueTree, path: []const u8, kv: *std.StringHashMap(CachedJValue).KV) !void {
+    fn parseJsonPath(tree: std.json.ValueTree, path: []const u8) !std.json.Value {
         var len: usize = 0;
         var json_value = tree.root;
         while (true) {
@@ -84,14 +89,11 @@ pub const Request = struct {
                         }
                     } else {
                         const path_part = path[len..];
-                        kv.value.value = json_value.Object.get(path_part).?.value;
-                        self.fetched_at = c.get_time().*;
-                        break;
+                        return json_value.Object.get(path_part).?.value;
                     }
                 },
                 else => {
-                    kv.value.value = json_value;
-                    break;
+                    return json_value;
                 },
             }
         }
@@ -112,6 +114,18 @@ pub const Request = struct {
         }
     }
 };
+
+const assert = std.debug.assert;
+test "parseJsonPath" {
+    // fn parseJsonPath(self: *Request, tree: std.json.ValueTree, path: []const u8, kv: *std.StringHashMap(CachedJValue).KV) !void {
+    var parser = std.json.Parser.init(std.heap.c_allocator, false);
+    var tree = try parser.parse("{\"a\": {\"b\": [{\"c\": 42}, {\"d\": 43}]}}");
+    const jc = try Request.parseJsonPath(tree, "a.b[0].c");
+    // warn("jc {}\n", .{jc});
+    assert(jc.Integer == 42);
+    const jd = try Request.parseJsonPath(tree, "a.b[1].d");
+    assert(jd.Integer == 43);
+}
 
 pub const Requests = struct {
     requests: std.StringHashMap(Request),

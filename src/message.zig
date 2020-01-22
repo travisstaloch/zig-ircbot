@@ -109,6 +109,8 @@ pub const Message = struct {
     }
 };
 
+/// return text up to but not inclding delimiter
+/// if delimiter is null, return all input
 pub fn strtok(_in: []const u8, _delim: ?u8) ?[]const u8 {
     if (_delim == null) return _in;
 
