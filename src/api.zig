@@ -129,15 +129,17 @@ pub const Requests = struct {
         var itr = tree.root.Object.iterator();
         while (itr.next()) |kv| {
             var req = kv.value;
-            var url = req.Object.get("url").?.value.String[0..:0];
+            const _url = req.Object.get("url");
+            if (_url == null) return error.InvalidJsonMissingUrl;
+            var url = (try std.mem.dupe(a, u8, _url.?.value.String))[0..:0];
             try replaceText(a, &url, config);
 
             const _headers = req.Object.get("headers");
-            const hs = if (_headers == null) &[_][:0]const u8{} else (try a.alloc([:0]const u8, _headers.?.value.Array.len));
-            if (_headers) |headers| {
-                for (headers.value.Array.toSliceConst()) |hdr, i| {
-                    hs[i] = hdr.String[0..:0];
-                    try replaceText(a, &hs[i], config);
+            const headers = if (_headers == null) &[_][:0]const u8{} else (try a.alloc([:0]const u8, _headers.?.value.Array.len));
+            if (_headers) |hs| {
+                for (hs.value.Array.toSliceConst()) |hdr, i| {
+                    headers[i] = (try std.mem.dupe(a, u8, hdr.String))[0..:0];
+                    try replaceText(a, &headers[i], config);
                 }
             }
 
@@ -149,12 +151,12 @@ pub const Requests = struct {
             while (citr.next()) |ckv| _ = try cmap.put(ckv.key, CachedJValue{ .path = ckv.value.String });
 
             const requires_opt = req.Object.get("requires");
-            var _pmap = if (requires_opt) |_requires| blk: {
+            var rmap = if (requires_opt) |_requires| blk: {
                 const requires = _requires.value.Object;
-                var pmap = std.StringHashMap(JsonKV).init(a);
-                var p_itr = requires.iterator();
-                while (p_itr.next()) |pkv| _ = try pmap.put(pkv.key, .{ .key = pkv.value });
-                break :blk pmap;
+                var _rmap = std.StringHashMap(JsonKV).init(a);
+                var ritr = requires.iterator();
+                while (ritr.next()) |rkv| _ = try _rmap.put(rkv.key, .{ .key = rkv.value });
+                break :blk _rmap;
             } else null;
 
             var buf: [20]u8 = undefined;
@@ -166,7 +168,7 @@ pub const Requests = struct {
             const typ_enum = std.meta.stringToEnum(Request.Type, typ);
             if (typ_enum == null) return error.InvalidJsonUnsupportedType;
 
-            _ = try reqs.put(kv.key, Request{ .typ = typ_enum.?, .url = url, .headers = hs, .cached = cmap, .requires = _pmap });
+            _ = try reqs.put(kv.key, Request{ .typ = typ_enum.?, .url = url, .headers = headers, .cached = cmap, .requires = rmap });
         }
         return Requests{ .requests = reqs };
     }
@@ -180,6 +182,7 @@ pub const Requests = struct {
     }
 };
 
+// TODO: dedupe logic
 pub fn replaceText(a: *std.mem.Allocator, text_field: *[]const u8, config: Config) !void {
     // look for ${field} in strings and replace with Config.field
     if (std.mem.indexOf(u8, text_field.*, "${")) |starti| {
@@ -189,12 +192,14 @@ pub fn replaceText(a: *std.mem.Allocator, text_field: *[]const u8, config: Confi
             inline for (std.meta.fields(@TypeOf(config))) |field| {
                 if (std.mem.eql(u8, field.name, key)) {
                     if (@field(config, field.name)) |value| {
+                        var ptr = text_field.*;
                         text_field.* = try std.mem.join(a, "", &[_][]const u8{
                             text_field.*[0..starti],
                             value,
                             text_field.*[starti + endi + 1 ..],
                             "\x00",
                         });
+                        a.free(ptr);
                     }
                 }
             }
@@ -202,24 +207,26 @@ pub fn replaceText(a: *std.mem.Allocator, text_field: *[]const u8, config: Confi
     }
 }
 
+// TODO: dedupe logic
 pub fn replaceTextMap(a: *std.mem.Allocator, text_field: *[]const u8, map: var) !void {
     // look for ${field} in strings and replace with map[key]
     if (std.mem.indexOf(u8, text_field.*, "${")) |starti| {
         if (std.mem.indexOf(u8, text_field.*[starti..], "}")) |endi| {
             const key = text_field.*[starti + 2 .. starti + endi];
             // warn("replaceTextMap key {}\n", .{key});
-            // TODO: replace with hash map. lookup key in map
             var ritr = map.iterator();
             while (ritr.next()) |requirekv| {
                 if (std.mem.eql(u8, requirekv.value.key.String, key)) {
                     const value = requirekv.value.value.?.String;
                     // warn("replaceTextMap value {}\n", .{value});
+                    var ptr = text_field.*;
                     text_field.* = try std.mem.join(a, "", &[_][]const u8{
                         text_field.*[0..starti],
                         value,
                         text_field.*[starti + endi + 1 ..],
                         "\x00",
                     });
+                    a.free(ptr);
                 }
             }
         }
