@@ -8,10 +8,10 @@ const irc = @import("client.zig");
 
 pub fn main() anyerror!void {
     const client = try irc.Client.initFromConfig(.{
-        .server = os.getenv("IRC_SERVER"),
-        .port = os.getenv("IRC_PORT"),
-        .nickname = os.getenv("IRC_NICKNAME"),
-        .channel = os.getenv("IRC_CHANNEL"),
+        .server = os.getenv("IRC_SERVER") orelse return error.MissingEnv,
+        .port = os.getenv("IRC_PORT") orelse return error.MissingEnv,
+        .nickname = os.getenv("IRC_NICKNAME") orelse return error.MissingEnv,
+        .channel = os.getenv("IRC_CHANNEL") orelse return error.MissingEnv,
         .password = os.getenv("IRC_OAUTH"),
         .clientid = os.getenv("IRC_CLIENTID"),
         .api_config_file = os.getenv("API_CONFIG_FILE"),

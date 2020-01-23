@@ -8,45 +8,43 @@ const Config = @import("config.zig").Config;
 
 pub const Context = struct {
     config: Config,
-    requests: api.Requests,
+    requests: std.StringHashMap(api.Request),
 };
 
 pub const Handler = fn (ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) anyerror!?[]const u8;
 
 pub fn uptime(ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) anyerror!?[]const u8 {
-    if (try process_command(ctx, sender, text, "get_stream", "created_at")) |result| {
+    // TODO: validate buffer is not null
+    // var buf = _buf orelse return error.MissingBuffer;
+    if (try get_cached("get_stream", "created_at", ctx, sender, text)) |created_at| {
         // TODO: parse time and return difference between now and then
-        return try std.fmt.bufPrint(buf.?, "live since {}", .{result});
+        return try std.fmt.bufPrint(buf.?, "live since {}", .{created_at});
     }
     return "stream is not live"[0..];
 }
 
 pub fn bio(ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) anyerror!?[]const u8 {
-    if (try process_command(ctx, sender, text, "get_users", "bio")) |result| {
-        return try std.fmt.bufPrint(buf.?, "{}", .{result});
+    if (try get_cached("get_users", "bio", ctx, sender, text)) |_bio| {
+        return try std.fmt.bufPrint(buf.?, "{}", .{_bio});
     }
     return null;
 }
 
 pub fn name(ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) anyerror!?[]const u8 {
-    if (try process_command(ctx, sender, text, "get_users", "name")) |result| {
-        return try std.fmt.bufPrint(buf.?, "{}", .{result});
+    if (try get_cached("get_users", "name", ctx, sender, text)) |_name| {
+        return try std.fmt.bufPrint(buf.?, "{}", .{_name});
     }
     return null;
 }
 
-fn process_command(ctx: Context, sender: ?[]const u8, text: ?[]const u8, req_key: []const u8, cached_key: []const u8) anyerror!?[]const u8 {
-    if (ctx.requests.requests.get(req_key)) |request| {
-        try request.value.fetch(ctx.requests.requests);
+fn get_cached(req_key: []const u8, cached_key: []const u8, ctx: Context, sender: ?[]const u8, text: ?[]const u8) anyerror!?[]const u8 {
+    if (ctx.requests.get(req_key)) |request| {
+        try request.value.fetch(ctx.requests);
         // request.value.print();
-        const cached = request.value.cached;
-        if (cached.get(cached_key)) |cachedkv| {
-            if (cachedkv.value.value) |value| {
-                switch (value) {
-                    .String => return value.String,
-                    else => {},
-                }
-            }
+        const cachedkv = request.value.cached.get(cached_key) orelse return null;
+        switch (cachedkv.value.value orelse return null) {
+            .String => |s| return s,
+            else => return error.UnsupportedJsonType,
         }
     }
     return null;

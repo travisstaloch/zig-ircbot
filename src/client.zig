@@ -17,7 +17,7 @@ pub const Client = struct {
     pub fn handle(self: Self) !void {
         var recv_buf: [2048]u8 = undefined;
 
-        const reqs = try api.Requests.init(std.heap.c_allocator, self.config);
+        const reqs = try api.initRequests(std.heap.c_allocator, self.config);
         var ctx = mhs.Context{ .config = self.config, .requests = reqs };
 
         while (true) {
@@ -36,38 +36,32 @@ pub const Client = struct {
             while (line_itr.next()) |line| {
                 if (line.len == 0) continue;
                 // warn("line {}\n", .{line});
-                const _m = msg.Message.parse(line);
-                if (_m) |m| {
-                    // warn("{}, .command_text = {}, .command = {}, .params = {}\n", .{ m.prefix, m.command_text, m.command, m.params });
-                    if (m.command) |cmd| {
-                        switch (cmd) {
-                            .PING => _ = try self.sendFmtErr("PONG :{}\r\n", .{m.params}),
-                            .PRIVMSG => try self.onPrivMsg(m, ctx),
-                            else => warn("unhandled command {}\n", .{cmd}),
-                        }
-                    }
-                } else {
+                const m = msg.Message.parse(line) orelse {
                     warn("failed to parse '{}'\n", .{line});
+                    continue;
+                };
+                // warn("{}, .command_text = {}, .command = {}, .params = {}\n", .{ m.prefix, m.command_text, m.command, m.params });
+                switch (m.command orelse continue) {
+                    .PING => _ = try self.sendFmtErr("PONG :{}\r\n", .{m.params}),
+                    .PRIVMSG => try self.onPrivMsg(m, ctx),
+                    else => |cmd| warn("unhandled command {}\n", .{cmd}),
                 }
             }
         }
     }
 
     fn onPrivMsg(self: Client, m: msg.Message, ctx: mhs.Context) !void {
-        if (m.params) |params| {
-            const _sender = msg.strtok(params, ':');
-            if (_sender) |sender| {
-                const message_text = params[sender.len + 1 ..];
-                // warn("sender {} text {}\n", .{ sender, message_text });
-                if (message_text[0] == '!') {
-                    const command_name = msg.strtoks(message_text[1..], &[_]?u8{ ' ', null });
-                    if (self.message_handlers.get(command_name.?)) |handlerkv| {
-                        var buf: [100]u8 = undefined;
-                        if (try handlerkv.value(ctx, sender, message_text[command_name.?.len + 1 ..], &buf)) |handler_output| {
-                            _ = try self.privmsg(handler_output[0..:0]);
-                        }
-                    }
-                }
+        const params = m.params orelse return;
+        const sender = msg.strtok(params, ':') orelse return;
+
+        const message_text = params[sender.len + 1 ..];
+        // warn("sender {} text {}\n", .{ sender, message_text });
+        if (message_text[0] == '!') {
+            const command_name = msg.strtoks(message_text[1..], &[_]?u8{ ' ', null }) orelse return;
+            const handlerkv = self.message_handlers.get(command_name) orelse return;
+            var buf: [100]u8 = undefined;
+            if (try handlerkv.value(ctx, sender, message_text[command_name.len + 1 ..], &buf)) |handler_output| {
+                _ = try self.privmsg(handler_output[0..:0]);
             }
         }
     }
@@ -82,8 +76,9 @@ pub const Client = struct {
                 }
             }
         }
-        const server = cfg.server.?[0..:0];
-        const port = cfg.port.?[0..:0];
+
+        const server = cfg.server[0..:0];
+        const port = cfg.port[0..:0];
         var result = Self{
             .sock = try c.get_socket(server, port),
             .config = cfg,

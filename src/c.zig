@@ -31,7 +31,7 @@ pub fn get_socket(host: [*:0]const u8, port: [*:0]const u8) !c_int {
         return error.SocketError;
     }
 
-    if (std.c.connect(s, res.addr.?, res.addrlen) < 0) {
+    if (std.c.connect(s, res.addr orelse return error.SocketErrorNoAddr, res.addrlen) < 0) {
         warn("Couldn't connect.\n", .{});
         return error.ConnectionError;
     }

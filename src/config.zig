@@ -1,8 +1,8 @@
 pub const Config = struct {
-    server: ?[]const u8 = null,
-    port: ?[]const u8 = null,
-    channel: ?[]const u8 = null,
-    nickname: ?[]const u8 = null,
+    server: []const u8,
+    port: []const u8,
+    channel: []const u8,
+    nickname: []const u8,
     password: ?[]const u8 = null,
     clientid: ?[]const u8 = null,
     username: ?[]const u8 = null,
