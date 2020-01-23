@@ -79,15 +79,12 @@ fn curl_write_fn(contents: *c_void, size: usize, nmemb: usize, userp: *align(@al
 pub fn curl_get(url: [:0]const u8, raw_headers: [][]const u8) !std.json.ValueTree {
     // std.debug.warn("curl_get: url {}\n", .{url});
     var res = c.curl_global_init(c.CURL_GLOBAL_ALL);
-    var curl = c.curl_easy_init();
+    var curl = c.curl_easy_init() orelse return error.FailedInit;
     defer {
         c.curl_easy_cleanup(curl);
         c.curl_global_cleanup();
     }
 
-    if (curl == null) {
-        return error.FailedInit;
-    }
     var headers = @intToPtr([*]allowzero c.curl_slist, 0);
     var mem: []u8 = "";
     for (raw_headers) |rh| {

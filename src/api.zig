@@ -67,8 +67,8 @@ pub const Request = struct {
         }
     }
 
-    // look through cached parsing and resolving the path as we go
-    // ex: users[0]._id
+    // look through cached, parsing and resolving the path as we go
+    // ex: users[0]._id, a.b.c[10].d
     // resolve by visiting json structure
     fn parseJsonPath(tree: std.json.ValueTree, path: []const u8) !std.json.Value {
         var len: usize = 0;
@@ -144,23 +144,21 @@ pub const Requests = struct {
         var itr = tree.root.Object.iterator();
         while (itr.next()) |kv| {
             var req = kv.value;
-            const _url = req.Object.get("url");
-            if (_url == null) return error.InvalidJsonMissingUrl;
-            var url = (try std.mem.dupe(a, u8, _url.?.value.String))[0..:0];
+            var urlkv = req.Object.get("url") orelse return error.InvalidJsonMissingUrl;
+            var url = (try std.mem.dupe(a, u8, urlkv.value.String))[0..:0];
             try replaceText(a, &url, config);
 
-            const _headers = req.Object.get("headers");
-            const headers = if (_headers == null) &[_][:0]const u8{} else (try a.alloc([:0]const u8, _headers.?.value.Array.len));
-            if (_headers) |hs| {
+            const headerskv = req.Object.get("headers");
+            const headers = if (headerskv) |hkv| (try a.alloc([:0]const u8, headerskv.?.value.Array.len)) else &[_][:0]const u8{};
+            if (headerskv) |hs| {
                 for (hs.value.Array.toSliceConst()) |hdr, i| {
                     headers[i] = (try std.mem.dupe(a, u8, hdr.String))[0..:0];
                     try replaceText(a, &headers[i], config);
                 }
             }
 
-            const _cached = req.Object.get("cached");
-            if (_cached == null) return error.InvalidJsonMissingCached;
-            var cached = _cached.?.value.Object;
+            const _cached = req.Object.get("cached") orelse return error.InvalidJsonMissingCached;
+            var cached = _cached.value.Object;
             var cmap = std.StringHashMap(CachedJValue).init(a);
             var citr = cached.iterator();
             while (citr.next()) |ckv| _ = try cmap.put(ckv.key, CachedJValue{ .path = ckv.value.String });
@@ -175,15 +173,13 @@ pub const Requests = struct {
             } else null;
 
             var buf: [20]u8 = undefined;
-            const _typ = req.Object.get("type");
-            if (_typ == null) return error.InvalidJsonMissingType;
-            var typ = _typ.?.value.String;
-            for (typ) |ch, chi| buf[chi] = std.ascii.toUpper(ch);
-            typ = buf[0..typ.len];
-            const typ_enum = std.meta.stringToEnum(Request.Type, typ);
-            if (typ_enum == null) return error.InvalidJsonUnsupportedType;
+            const _reqtype = req.Object.get("type") orelse return error.InvalidJsonMissingType;
+            var reqtype = _reqtype.?.value.String;
+            for (reqtype) |ch, chi| buf[chi] = std.ascii.toUpper(ch);
+            reqtype = buf[0..reqtype.len];
+            const reqtype_enum = std.meta.stringToEnum(Request.Type, reqtype) orelse return error.InvalidJsonUnsupportedType;
 
-            _ = try reqs.put(kv.key, Request{ .typ = typ_enum.?, .url = url, .headers = headers, .cached = cmap, .requires = rmap });
+            _ = try reqs.put(kv.key, Request{ .typ = reqtype_enum.?, .url = url, .headers = headers, .cached = cmap, .requires = rmap });
         }
         return Requests{ .requests = reqs };
     }

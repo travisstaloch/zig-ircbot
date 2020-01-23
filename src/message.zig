@@ -74,18 +74,14 @@ pub const Message = struct {
             // parse prefix
             m.prefix = .{};
             len += 1;
-            const _prefix = strtok(input[len..], ' ');
-            if (_prefix) |prefix| {
-                const _nick = strtok(prefix, '!');
-                if (_nick) |nick| {
+            if (strtok(input[len..], ' ')) |prefix| {
+                if (strtok(prefix, '!')) |nick| {
                     m.prefix.?.nick = nick;
                     len += nick.len + 1;
-                    const _user = strtok(input[len..], '@');
-                    if (_user) |user| {
+                    if (strtok(input[len..], '@')) |user| {
                         m.prefix.?.user = user;
                         len += user.len + 1;
-                        const _host = strtok(input[len..], ' ');
-                        if (_host) |host| {
+                        if (strtok(input[len..], ' ')) |host| {
                             m.prefix.?.host = host;
                             len += host.len + 1;
                         }
@@ -97,8 +93,7 @@ pub const Message = struct {
             }
         }
         // parse command, params
-        const _command_text = strtok(input[len..], ' ');
-        if (_command_text) |command_text| {
+        if (strtok(input[len..], ' ')) |command_text| {
             m.command_text = command_text;
             m.command = std.meta.stringToEnum(CommandType, command_text);
             len += command_text.len + 1;
@@ -112,24 +107,18 @@ pub const Message = struct {
 /// return text up to but not inclding delimiter
 /// if delimiter is null, return all input
 pub fn strtok(_in: []const u8, _delim: ?u8) ?[]const u8 {
-    if (_delim == null) return _in;
-
-    var start: []const u8 = undefined;
-    var in = _in.ptr;
-    const startp = @ptrToInt(in);
-    var inp = startp;
-    start.ptr = in;
-    while (inp < startp + _in.len) : (inp += 1) {
-        in = @intToPtr([*]const u8, inp);
-        // warn("in[0]{c}\n", .{in[0]});
-        if (_delim) |delim| {
-            if (in[0] == delim) {
-                start.len = inp - @ptrToInt(start.ptr);
-                return start;
-            }
-        }
+    const delim = _delim orelse return _in;
+    var in = _in;
+    while (in.len > 0) : (in = in[1..]) {
+        if (in[0] == delim) return _in[0 .. _in.len - in.len];
     }
     return null;
+}
+
+test "strtok" {
+    const nick = strtok(":nick!"[1..], '!') orelse return error.StrtokFailure;
+    assert(std.mem.eql(u8, nick, "nick"));
+    assert(strtok("asdf", '.') == null);
 }
 
 pub fn strtoks(_in: []const u8, _delims: []?u8) ?[]const u8 {
@@ -148,11 +137,6 @@ test "parse PRIVMSG" {
     assert(m.command.? == .PRIVMSG);
     assert(std.mem.eql(u8, m.prefix.?.user.?, "~user"));
     assert(std.mem.eql(u8, m.prefix.?.host.?, "host"));
-}
-
-test "strtok" {
-    const nick = strtok(":nick!"[1..], '!');
-    assert(std.mem.eql(u8, nick.?, "nick"));
 }
 
 test "welcome messages" {
