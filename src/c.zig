@@ -62,17 +62,12 @@ pub fn get_time_str(buf: []u8) usize {
 
 fn curl_write_fn(contents: *c_void, size: usize, nmemb: usize, userp: *align(@alignOf([]u8)) c_void) usize {
     const bytesize = size * nmemb;
-    var memp = @ptrCast(*[]u8, userp);
     const contsp = @ptrCast([*]u8, contents);
-    // std.debug.warn("contents {}\n", .{contsp[0..bytesize]});
-    const mem = memp.*;
-    var ptr = std.heap.c_allocator.realloc(mem, mem.len + bytesize) catch |e| {
+    var bufferp = @ptrCast(*std.Buffer, userp);
+    _ = bufferp.*.append(contsp[0..bytesize]) catch |e| {
         std.debug.warn("{}\n", .{e});
         return 0;
     };
-
-    std.mem.copy(u8, ptr[mem.len .. mem.len + bytesize], contsp[0..bytesize]);
-    memp.* = ptr;
     return bytesize;
 }
 
@@ -86,7 +81,9 @@ pub fn curl_get(url: [:0]const u8, raw_headers: [][]const u8) !std.json.ValueTre
     }
 
     var headers = @intToPtr([*]allowzero c.curl_slist, 0);
-    var mem: []u8 = "";
+    defer c.curl_slist_free_all(headers);
+    var mem = try std.Buffer.init(std.heap.c_allocator, "");
+    // defer mem.deinit();
     for (raw_headers) |rh| {
         var hdr_buf: [256]u8 = undefined;
         const h = try std.fmt.bufPrint(&hdr_buf, "{s}\x00", .{rh});
@@ -103,12 +100,10 @@ pub fn curl_get(url: [:0]const u8, raw_headers: [][]const u8) !std.json.ValueTre
     res = c.curl_easy_perform(curl);
 
     // std.debug.warn("{} \n", .{mem.len});
-    // std.debug.warn("{} \n", .{mem});
+    // std.debug.warn("{} \n", .{mem.toSliceConst()});
     var parser = std.json.Parser.init(std.heap.c_allocator, false);
-    var json = try parser.parse(mem);
-    defer {
-        parser.deinit();
-        // json.deinit();
-    }
+    defer parser.deinit();
+    var json = try parser.parse(mem.toSliceConst());
+
     return json;
 }
