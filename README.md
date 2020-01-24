@@ -9,6 +9,11 @@ source .env
 zig build run
 ```
 
+### Testing
+```console
+zig build test
+```
+
 #### config/api.json
 ```json
 {

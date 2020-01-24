@@ -1,6 +1,6 @@
 {
     "get_users": {
-        "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: uo6dggojyb8d6soh92zknwmi5ej1q2' -X GET https://api.twitch.tv/kraken/users?login=nickname",
+        "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: ' -X GET https://api.twitch.tv/kraken/users?login=nickname",
         "type": "GET",
         "url": "https://api.twitch.tv/kraken/users?login=${channel}",
         "headers": [
@@ -14,7 +14,7 @@
         }
     },
     "get_stream": {
-        "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: uo6dggojyb8d6soh92zknwmi5ej1q2' -X GET 'https://api.twitch.tv/kraken/streams/44322889'",
+        "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: ' -X GET 'https://api.twitch.tv/kraken/streams/44322889'",
         "url": "https://api.twitch.tv/kraken/streams/${userid}",
         "type": "GET",
         "headers": [
@@ -26,6 +26,21 @@
         },
         "cached": {
             "created_at": "stream.created_at"
+        }
+    },
+    "get_user_by_id": {
+        "curl": "curl -H 'Accept: application/vnd.twitchtv.v5+json' -H 'Client-ID: ' -X GET 'https://api.twitch.tv/kraken/users/44322889'",
+        "url": "https://api.twitch.tv/kraken/users/${userid}",
+        "type": "GET",
+        "headers": [
+            "Accept: application/vnd.twitchtv.v5+json",
+            "Client-ID: ${clientid}"
+        ],
+        "requires": {
+            "get_users": "userid"
+        },
+        "cached": {
+            "logo": "logo"
         }
     }
 }

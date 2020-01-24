@@ -14,4 +14,11 @@ pub fn build(b: *Builder) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const tst = b.addTest("src/test.zig");
+    tst.linkSystemLibrary("c");
+    tst.linkSystemLibrary("curl");
+
+    const tst_step = b.step("test", "Test the app");
+    tst_step.dependOn(&tst.step);
 }

@@ -37,6 +37,14 @@ pub fn name(ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) an
     return null;
 }
 
+// test request with require
+pub fn logo(ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) anyerror!?[]const u8 {
+    if (try get_cached("get_user_by_id", "logo", ctx, sender, text)) |_logo| {
+        return try std.fmt.bufPrint(buf.?, "{}", .{_logo});
+    }
+    return null;
+}
+
 fn get_cached(req_key: []const u8, cached_key: []const u8, ctx: Context, sender: ?[]const u8, text: ?[]const u8) anyerror!?[]const u8 {
     if (ctx.requests.get(req_key)) |request| {
         try request.value.fetch(ctx.requests);
@@ -46,6 +54,6 @@ fn get_cached(req_key: []const u8, cached_key: []const u8, ctx: Context, sender:
             .String => |s| return s,
             else => return error.UnsupportedJsonType,
         }
-    }
+    } else return error.KeyNotFound;
     return null;
 }

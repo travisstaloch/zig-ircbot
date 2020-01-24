@@ -18,6 +18,11 @@ pub const Client = struct {
         var recv_buf: [2048]u8 = undefined;
 
         const reqs = try api.initRequests(std.heap.c_allocator, self.config);
+        defer {
+            var itr = reqs.iterator();
+            while (itr.next()) |reqkv| reqkv.value.deinit();
+            reqs.deinit();
+        }
         var ctx = mhs.Context{ .config = self.config, .requests = reqs };
 
         while (true) {
@@ -32,20 +37,26 @@ pub const Client = struct {
             warn("{}\n", .{time_buf[0..time_len]});
             warn("{}\n", .{received});
 
-            var line_itr = mem.separate(received, "\r\n");
-            while (line_itr.next()) |line| {
-                if (line.len == 0) continue;
-                // warn("line {}\n", .{line});
-                const m = msg.Message.parse(line) orelse {
-                    warn("failed to parse '{}'\n", .{line});
-                    continue;
-                };
-                // warn("{}, .command_text = {}, .command = {}, .params = {}\n", .{ m.prefix, m.command_text, m.command, m.params });
-                switch (m.command orelse continue) {
-                    .PING => _ = try self.sendFmtErr("PONG :{}\r\n", .{m.params}),
-                    .PRIVMSG => try self.onPrivMsg(m, ctx),
-                    else => |cmd| warn("unhandled command {}\n", .{cmd}),
-                }
+            try self.handleReceived(received, ctx);
+        }
+    }
+
+    pub fn handleReceived(self: Client, received: []const u8, ctx: mhs.Context) !void {
+        var line_itr = mem.separate(received, "\r\n");
+        while (line_itr.next()) |line| {
+            if (line.len == 0) continue;
+            // warn("line {}\n", .{line});
+            const m = msg.Message.parse(line) orelse {
+                warn("failed to parse '{}'\n", .{line});
+                continue;
+            };
+            // warn("{}, .command_text = {}, .command = {}, .params = {}\n", .{ m.prefix, m.command_text, m.command, m.params });
+            switch (m.command orelse continue) {
+                .PING => _ = try self.sendFmtErr("PONG :{}\r\n", .{m.params}),
+                .PRIVMSG => self.onPrivMsg(m, ctx) catch |e| {
+                    warn("onPrivMsg error {}. message: {}\n", .{ e, m.params });
+                },
+                else => |cmd| warn("unhandled command {}\n", .{cmd}),
             }
         }
     }
@@ -59,7 +70,7 @@ pub const Client = struct {
         if (message_text[0] == '!') {
             const command_name = msg.strtoks(message_text[1..], &[_]?u8{ ' ', null }) orelse return;
             const handlerkv = self.message_handlers.get(command_name) orelse return;
-            var buf: [100]u8 = undefined;
+            var buf: [256]u8 = undefined;
             if (try handlerkv.value(ctx, sender, message_text[command_name.len + 1 ..], &buf)) |handler_output| {
                 _ = try self.privmsg(handler_output[0..:0]);
             }
@@ -87,6 +98,10 @@ pub const Client = struct {
         return result;
     }
 
+    pub fn deinit(self: Client) void {
+        self.message_handlers.deinit();
+    }
+
     // various send functions with/without format along with corresponding sockSend follow
     // *Err versions propogate errors
     pub fn sendFmt(self: Self, comptime fmt: []const u8, values: var) void {
@@ -110,7 +125,7 @@ pub const Client = struct {
     }
 
     pub fn sockSendFmt(sock: c_int, comptime fmt: [:0]const u8, values: var) !usize {
-        var buf: [80]u8 = undefined;
+        var buf: [256]u8 = undefined;
         var m = try std.fmt.bufPrint(&buf, fmt, values);
         var sent = try c.sck_send(sock, m[0..:0], m.len);
         return sent;

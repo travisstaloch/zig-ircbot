@@ -3,4 +3,5 @@
 test "all" {
     _ = @import("api.zig");
     _ = @import("message.zig");
+    _ = @import("main.zig");
 }

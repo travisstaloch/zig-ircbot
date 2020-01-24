@@ -31,28 +31,39 @@ pub const Request = struct {
         POST,
     };
 
+    pub fn deinit(self: Request) void {
+        if (self.requires) |rqs| rqs.deinit();
+        self.cached.deinit();
+    }
+
     // call fetch on all requires then do macro replacements
     // ex: require                              -> request
     //     get_stream.requires.get_users.userid -> get_users.cached.userid.value
     // TODO: use fetched_at to decide wether to fetch again
+    // for now, just deinit every fetch
     pub fn fetch(self: *Request, requests: std.StringHashMap(Request)) anyerror!void {
+        defer self.deinit();
         if (self.requires) |*requires| {
             var ritr = requires.iterator();
             while (ritr.next()) |requirekv| {
                 if (requests.get(requirekv.key)) |requestkv| {
                     try requestkv.value.fetch(requests);
-                    const cachedkv = requestkv.value.cached.get(requirekv.value.key.String) orelse return error.InvalidJsonRequireNotCached;
+                    const cachedkv = requestkv.value.cached.get(requirekv.value.key.String) orelse return error.JsonRequireNotCached;
+                    // warn("cachedkv {}\n", .{cachedkv});
                     requirekv.value.value = cachedkv.value.value;
                 }
             }
+
+            // check for ${} macro replacements in url and headers
+            // TODO: post data replacements
             try replaceText(std.heap.c_allocator, &self.url, requires);
             for (self.headers) |*hdr| try replaceText(std.heap.c_allocator, hdr, requires);
         }
 
-        // check for ${} macro replacements in url and headers, post data eventually
         switch (self.type) {
             .GET => {
                 var tree = try c.curl_get(self.url, self.headers);
+                // warn("{}\n", .{tree.root.dump()});
                 defer tree.deinit();
                 var itr = self.cached.iterator();
                 while (itr.next()) |kv| {
@@ -87,22 +98,22 @@ pub const Request = struct {
                         if (strtok(path_part, '[')) |arr_name| {
                             if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
                                 const idx = try std.fmt.parseInt(usize, arr_idx, 10);
-                                const obj = json_value.Object.get(arr_name) orelse return error.InvalidJsonPath;
+                                const obj = json_value.Object.get(arr_name) orelse return error.JsonPathNotFound;
                                 switch (obj.value) {
                                     .Array => {
                                         if (idx >= obj.value.Array.len) return error.InvalidJsonArrayIndex;
                                         json_value = obj.value.Array.at(idx);
                                         continue;
                                     },
-                                    else => return error.InvalidJsonPath,
+                                    else => return error.JsonPathNotFound,
                                 }
                             }
                         } else { // object
-                            const obj = json_value.Object.get(path_part) orelse return error.InvalidJsonPath;
+                            const obj = json_value.Object.get(path_part) orelse return error.JsonPathNotFound;
                             json_value = obj.value;
                         }
                     } else {
-                        const obj = json_value.Object.get(path[len..]) orelse return error.InvalidJsonPath;
+                        const obj = json_value.Object.get(path[len..]) orelse return error.JsonPathNotFound;
                         return obj.value;
                     }
                 },
@@ -127,8 +138,8 @@ pub const Request = struct {
     }
 };
 
-const assert = std.debug.assert;
 test "parseJsonPath" {
+    const assert = std.debug.assert;
     // fn parseJsonPath(self: *Request, tree: std.json.ValueTree, path: []const u8, kv: *std.StringHashMap(CachedJValue).KV) !void {
     var parser = std.json.Parser.init(std.heap.c_allocator, false);
     const json =
@@ -140,7 +151,7 @@ test "parseJsonPath" {
     assert(jc.Integer == 42);
     const jd = try Request.parseJsonPath(tree, "a.b[1].d");
     assert(jd.Integer == 43);
-    std.testing.expectError(error.InvalidJsonPath, Request.parseJsonPath(tree, "a.c"));
+    std.testing.expectError(error.JsonPathNotFound, Request.parseJsonPath(tree, "a.c"));
     std.testing.expectError(error.InvalidJsonArrayIndex, Request.parseJsonPath(tree, "a.b[2]"));
     const ja22 = try Request.parseJsonPath(tree, "a2[2]");
     assert(ja22.Integer == 22);
@@ -149,6 +160,7 @@ test "parseJsonPath" {
 /// load from json file which defines the api calls
 pub fn initRequests(a: *std.mem.Allocator, config: Config) !std.StringHashMap(Request) {
     var reqs = std.StringHashMap(Request).init(a);
+    errdefer reqs.deinit();
     const f = try std.fs.File.openRead(config.api_config_file orelse return error.MissingApiConfigFile);
     defer f.close();
     const stream = &f.inStream().stream;
@@ -208,47 +220,58 @@ pub fn printRequests(reqs: std.StringHashMap(Request)) void {
     }
 }
 
-fn joinAndCleanup(a: *std.mem.Allocator, text_field: *[]const u8, starti: usize, endi: usize, value: []const u8) !void {
+// insert value at text_field[starti..endi+1]
+// reassigns text_field and frees old memory
+fn insertText(a: *std.mem.Allocator, text_field: *[]const u8, starti: usize, endi: usize, value: []const u8) !void {
     var ptr = text_field.*;
     text_field.* = try std.mem.join(a, "", &[_][]const u8{
         text_field.*[0..starti],
         value,
         text_field.*[starti + endi + 1 ..],
-        "\x00",
+        // "\x00",
     });
     a.free(ptr);
 }
 
+/// provider must be either a Config or StringHashMap()
 pub fn replaceText(a: *std.mem.Allocator, text_field: *[]const u8, provider: var) !void {
-    // look for ${field} in strings and replace with Config.field
+    // look for ${field} in strings and replace with Config.field or
+    // if called with a map, search provider for JsonKV.key == field and replace with JsonKV.value
     // TODO: support replacing multiple occurrences of field
     if (std.mem.indexOf(u8, text_field.*, "${")) |starti| {
+        // warn("text_field.* {}\n", .{text_field.*});
         if (std.mem.indexOf(u8, text_field.*[starti..], "}")) |endi| {
             const key = text_field.*[starti + 2 .. starti + endi];
             if (@TypeOf(provider) == Config) {
                 inline for (std.meta.fields(@TypeOf(provider))) |field| {
                     if (std.mem.eql(u8, field.name, key)) {
                         const _value = @field(provider, field.name);
+                        // support optional Config fields
                         const ti = @typeInfo(@TypeOf(_value));
                         switch (ti) {
-                            .Optional => {
-                                if (_value) |value| {
-                                    try joinAndCleanup(a, text_field, starti, endi, value);
-                                }
-                            },
-                            else => try joinAndCleanup(a, text_field, starti, endi, _value),
+                            .Optional => if (_value) |value|
+                                try insertText(a, text_field, starti, endi, value),
+                            else => try insertText(a, text_field, starti, endi, _value),
                         }
                     }
                 }
             } else { // hash map
                 var ritr = provider.iterator();
                 while (ritr.next()) |requirekv| {
-                    if (std.mem.eql(u8, requirekv.value.key.String, key)) {
-                        const value = requirekv.value.value orelse continue;
-                        try joinAndCleanup(a, text_field, starti, endi, value.String);
-                    }
+                    if (!std.mem.eql(u8, requirekv.value.key.String, key)) continue;
+                    const value = requirekv.value.value orelse continue;
+                    try insertText(a, text_field, starti, endi, value.String);
                 }
             }
         }
     }
+}
+
+test "replaceText" {
+    const a = std.heap.c_allocator;
+    var field = try std.mem.dupe(a, u8, "a ${channel} b");
+    const config = Config{ .channel = "#channel_name", .server = "", .port = "", .nickname = "" };
+    try replaceText(a, &field, config);
+    const expected = "a #channel_name b";
+    std.testing.expectEqualSlices(u8, field, expected);
 }
