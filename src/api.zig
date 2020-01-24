@@ -40,9 +40,7 @@ pub const Request = struct {
     // ex: require                              -> request
     //     get_stream.requires.get_users.userid -> get_users.cached.userid.value
     // TODO: use fetched_at to decide wether to fetch again
-    // for now, just deinit every fetch
     pub fn fetch(self: *Request, requests: std.StringHashMap(Request)) anyerror!void {
-        defer self.deinit();
         if (self.requires) |*requires| {
             var ritr = requires.iterator();
             while (ritr.next()) |requirekv| {
@@ -91,31 +89,29 @@ pub const Request = struct {
         var json_value = tree.root;
         while (true) {
             switch (json_value) {
-                .Object => {
-                    if (msg.strtoks(path[len..], &[_]?u8{ '.', null })) |path_part| {
-                        len += path_part.len + 1;
-                        // array
-                        if (strtok(path_part, '[')) |arr_name| {
-                            if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
-                                const idx = try std.fmt.parseInt(usize, arr_idx, 10);
-                                const obj = json_value.Object.get(arr_name) orelse return error.JsonPathNotFound;
-                                switch (obj.value) {
-                                    .Array => {
-                                        if (idx >= obj.value.Array.len) return error.InvalidJsonArrayIndex;
-                                        json_value = obj.value.Array.at(idx);
-                                        continue;
-                                    },
-                                    else => return error.JsonPathNotFound,
-                                }
+                .Object => if (msg.strtoks(path[len..], &[_]?u8{ '.', null })) |path_part| {
+                    len += path_part.len + 1;
+                    // array
+                    if (strtok(path_part, '[')) |arr_name| {
+                        if (strtok(path_part[arr_name.len + 1 ..], ']')) |arr_idx| {
+                            const idx = try std.fmt.parseInt(usize, arr_idx, 10);
+                            const obj = json_value.Object.get(arr_name) orelse return error.JsonPathNotFound;
+                            switch (obj.value) {
+                                .Array => {
+                                    if (idx >= obj.value.Array.len) return error.InvalidJsonArrayIndex;
+                                    json_value = obj.value.Array.at(idx);
+                                    continue;
+                                },
+                                else => return error.JsonPathNotFound,
                             }
-                        } else { // object
-                            const obj = json_value.Object.get(path_part) orelse return error.JsonPathNotFound;
-                            json_value = obj.value;
                         }
-                    } else {
-                        const obj = json_value.Object.get(path[len..]) orelse return error.JsonPathNotFound;
-                        return obj.value;
+                    } else { // object
+                        const obj = json_value.Object.get(path_part) orelse return error.JsonPathNotFound;
+                        json_value = obj.value;
                     }
+                } else {
+                    const obj = json_value.Object.get(path[len..]) orelse return error.JsonPathNotFound;
+                    return obj.value;
                 },
                 else => return json_value,
             }
