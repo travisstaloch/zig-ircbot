@@ -34,36 +34,31 @@ zig build test
 
 #### src/main.zig
 ```zig
-    const client = try irc.Client.initFromConfig(.{
-        .server = os.getenv("IRC_SERVER"),
-        .port = os.getenv("IRC_PORT"),
-        .nickname = os.getenv("IRC_NICKNAME"),
-        .channel = os.getenv("IRC_CHANNEL"),
-        .password = os.getenv("IRC_OAUTH"),
-        .clientid = os.getenv("IRC_CLIENTID"),
-        .api_config_file = os.getenv("API_CONFIG_FILE"),
-    });
+     const client = try initClient();
     try client.identify();
     try client.handle();
 ```
 
+
 #### src/message_handlers.zig
+Functions which match this signature will be called for PRIVMSGs which begin with '!'.
+For example, '!name' would call the following handler.
 ```zig
 pub fn name(ctx: Context, sender: ?[]const u8, text: ?[]const u8, buf: ?[]u8) anyerror!?[]const u8 {
-    if (try process_command(ctx, sender, text, "get_users", "name")) |result| {
-        return try std.fmt.bufPrint(buf.?, "{}", .{result});
+    if (try get_cached("get_users", "name", ctx, sender, text)) |_name| {
+        return try std.fmt.bufPrint(buf.?, "{}", .{_name});
     }
     return null;
 }
 ```
 
 ### Reference Projects
-
 C
 > https://github.com/andrew-stclair/simple-irc-bot/
 
 Rust
 > https://github.com/aatxe/irc
+
 
 ### References
 - https://dev.twitch.tv/docs/irc/guide/
